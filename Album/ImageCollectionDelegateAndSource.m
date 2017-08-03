@@ -25,9 +25,17 @@
     NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:stringVideo]];
 
     [dow downloadImageForURLRequest:request success:^(NSURLRequest *_Nonnull request, NSHTTPURLResponse *_Nullable response, UIImage *_Nonnull responseObject) {
-        imageView.image = responseObject;
-        indicator.hidden = YES;
-        [indicator stopAnimating];
+
+        [self compressImage:responseObject onCompletion:^(UIImage *compressedImage) {
+            indicator.hidden = YES;
+            [indicator stopAnimating];
+
+            if (compressedImage) {
+                imageView.image = compressedImage;
+            } else {
+                imageView.image = responseObject;
+            }
+        }];
 
     }                       failure:^(NSURLRequest *_Nonnull request, NSHTTPURLResponse *_Nullable response, NSError *_Nonnull error) {
         //TODO set N/A image
@@ -79,8 +87,69 @@
     return cell;
 }
 
-- (void) setCellSize:(CGFloat)size {
+- (void)setCellSize:(CGFloat)size {
     cellSize = size;
+}
+
+- (void)compressImage:(UIImage *)inputImage onCompletion:(void (^)(UIImage *))completion {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        UIImage *compressedImage = [self compressImage:inputImage];
+
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(compressedImage);
+            });
+        }
+    });
+}
+
+- (UIImage *)compressImage:(UIImage *)imageToCompress {
+    return [self compressImage:imageToCompress compressRatio:0.0 maxCompressRatio:0.1f];
+}
+
+- (UIImage *)compressImage:(UIImage *)image compressRatio:(CGFloat)ratio maxCompressRatio:(CGFloat)maxRatio {
+
+    //We define the max and min resolutions to shrink to
+    int MIN_UPLOAD_RESOLUTION = 568 * 320;
+    int MAX_UPLOAD_SIZE = 50;
+
+    float factor;
+    float currentResolution = image.size.height * image.size.width;
+
+    //We first shrink the image a little bit in order to compress it a little bit more
+    if (currentResolution > MIN_UPLOAD_RESOLUTION) {
+        factor = sqrt(currentResolution / MIN_UPLOAD_RESOLUTION) * 2;
+        image = [self scaleDown:image withSize:CGSizeMake(image.size.width / factor, image.size.height / factor)];
+    }
+
+    //Compression settings
+    CGFloat compression = ratio;
+    CGFloat maxCompression = maxRatio;
+
+    //We loop into the image data to compress accordingly to the compression ratio
+    NSData *imageData = UIImageJPEGRepresentation(image, compression);
+    while ([imageData length] > MAX_UPLOAD_SIZE && compression > maxCompression) {
+        compression -= 0.25;
+        imageData = UIImageJPEGRepresentation(image, compression);
+    }
+
+    //Retuns the compressed image
+    return [[UIImage alloc] initWithData:imageData];
+}
+
+- (UIImage *)scaleDown:(UIImage *)image withSize:(CGSize)newSize {
+
+    //We prepare a bitmap with the new size
+    UIGraphicsBeginImageContextWithOptions(newSize, YES, 0.0);
+
+    //Draws a rect for the image
+    [image drawInRect:CGRectMake(0, 0, newSize.width, newSize.height)];
+
+    //We set the scaled image from the context
+    UIImage *scaledImage = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+
+    return scaledImage;
 }
 
 #pragma mark <UICollectionViewDelegateFlowLayout>
@@ -112,18 +181,10 @@
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
     static NSString *identifier = @"Cell";
     NSString *imageURL = [[Library sharedManager] indexOfImageURL:indexPath.row];
-    UICollectionViewCell *cell = [(ImageCollectionDelegateAndSource *) collectionView dequeueReusableCellWithReuseIdentifier:identifier
-                                                                                                   forIndexPath:indexPath
-                                                                                                       imageURL:imageURL];
 
-    //    UIImageView *imageView = (UIImageView *) [cell viewWithTag:111];
-    //    NSURL *url = [NSURL URLWithString:];
-    //    NSData *data = [NSData dataWithContentsOfURL:url];
-    //    UIImage *img = [[UIImage alloc] initWithData:data];
-    //    //CGSize size = img.size;
-    //    imageView.image = img;
-
-    return cell;
+    return [(ImageCollectionDelegateAndSource *) collectionView dequeueReusableCellWithReuseIdentifier:identifier
+                                                                                          forIndexPath:indexPath
+                                                                                              imageURL:imageURL];
 }
 
 #pragma mark <UICollectionViewDelegate>
